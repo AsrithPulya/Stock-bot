@@ -1,0 +1,27 @@
+# Virtual environments
+tmp_venv/
+venv/
+env/
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+*.egg
+
+# Bot state and logs (do not commit trading history or live logs)
+trading_bot_state.json
+trade_history.json
+bot_log.txt
+bot.pid
+
+# Testing and scratch files
+scratch/
+gemini_model_test_results.json
+
+# OS files
+.DS_Store
