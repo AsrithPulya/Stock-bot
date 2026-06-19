@@ -7,6 +7,8 @@ import sys
 import datetime
 import time
 import pandas as pd
+from pymongo import MongoClient
+from dotenv import load_dotenv
 from trade_journal import TradeJournal
 import performance_monitor
 
@@ -119,6 +121,20 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def load_state():
+    load_dotenv()
+    mongo_uri = os.environ.get("MONGO_URI")
+    if mongo_uri:
+        try:
+            client = MongoClient(mongo_uri)
+            db = client.get_database("stockbot")
+            coll = db["bot_state"]
+            state = coll.find_one({"_id": "current_state"})
+            if state:
+                return state
+        except Exception as e:
+            pass
+            
+    # Fallback to local
     if not os.path.exists(STATE_FILE):
         return None
     try:
