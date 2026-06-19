@@ -6,6 +6,7 @@ import os
 import sys
 import signal
 import yfinance as yf
+from pymongo import MongoClient
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -85,8 +86,8 @@ def bot_log(msg: str):
 TEST_MODE   = False
 PAPER_TRADE = True    # ←←← KEEP TRUE UNTIL READY TO GO LIVE
 
-TEST_LOOP_SLEEP  = 300        # seconds between iterations in test mode
-TEST_INITIAL_CASH = 10_000  # ₹10 Thousand starting capital
+TEST_LOOP_SLEEP  = 60        # seconds between iterations in test mode
+TEST_INITIAL_CASH = 25_000  # ₹25 Thousand starting capital
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -308,12 +309,8 @@ Here are some typical relationships worth being aware of:
 ═══════════════════════════════════════════════════════════
 POSITION SIZING & CAPITAL RULES
 ═══════════════════════════════════════════════════════════
-• Minimum 20% cash buffer at all times (emergency + opportunity)
-• Single stock: never exceed 20% of total portfolio value
-• High conviction (strong fundamentals + positive news + price momentum):
-    → deploy up to 15–20% of cash in one trade
-• Moderate conviction: 5–10% of cash
-• Always leave room — do not go all-in on one stock
+• Diversification: Do NOT allocate all capital to a single stock. Maintain a maximum limit of 30% of Total Portfolio Value per stock.
+• Distribute cash across 3–4 high-conviction positions to reduce systemic exposure and avoid holding single-stock concentration risk.
 
 ═══════════════════════════════════════════════════════════
 PROFIT BOOKING & LOSS CUTTING
@@ -1119,8 +1116,13 @@ class MultiStockTradingSimulator:
         )
 
         if action == 'BUY':
-            buffer_pct = 0.20 if not PAPER_TRADE else 0.25
-            deployable = max(0, self.cash - total_portfolio * buffer_pct)
+            # Limit exposure per stock to a maximum of 30% of total portfolio value
+            max_stock_capital = total_portfolio * 0.30
+            current_stock_value = self.holdings[symbol] * execution_actual_price
+            allowed_new_value = max(0, max_stock_capital - current_stock_value)
+            
+            # Allow deploying cash up to the allowed position size limit
+            deployable = min(max(0, self.cash), allowed_new_value)
             
             # We calculate max_qty using the actual execution price
             max_qty    = int(deployable / execution_actual_price) if execution_actual_price > 0 else 0
@@ -1254,6 +1256,18 @@ class MultiStockTradingSimulator:
 
     # ── State Persistence ─────────────────────────────────────────────────────
 
+    def get_mongo_collection(self):
+        mongo_uri = os.environ.get("MONGO_URI")
+        if not mongo_uri:
+            return None
+        try:
+            client = MongoClient(mongo_uri)
+            db = client.get_database("stockbot")
+            return db["bot_state"]
+        except Exception as e:
+            print(f"⚠️  Could not connect to MongoDB for bot state: {e}")
+            return None
+
     def save_state(self):
         state = {
             "cash":         self.cash,
@@ -1264,22 +1278,47 @@ class MultiStockTradingSimulator:
             "stock_data":   self.stock_data,
             "bought_date":    self.bought_date,   # T+1 settlement tracker
             "break_even_stop": self.break_even_stop,
-            "unsettled_cash": self.unsettled_cash,
+            "unsettled_cash": getattr(self, "unsettled_cash", []),
             "paper_trade":    PAPER_TRADE,
             "last_updated": datetime.datetime.now().isoformat(),
         }
-        try:
-            with open(self.STATE_FILE, 'w') as f:
-                json.dump(state, f, indent=2)
-        except Exception as e:
-            print(f"⚠️  Could not save state: {e}")
+        
+        coll = self.get_mongo_collection()
+        if coll is not None:
+            try:
+                coll.replace_one({"_id": "current_state"}, state, upsert=True)
+            except Exception as e:
+                print(f"⚠️  Could not save state to MongoDB: {e}")
+        else:
+            # Fallback
+            try:
+                with open(self.STATE_FILE, 'w') as f:
+                    json.dump(state, f, indent=2)
+            except Exception as e:
+                print(f"⚠️  Could not save fallback state: {e}")
 
     def load_state(self):
-        if not os.path.exists(self.STATE_FILE):
-            return False
+        coll = self.get_mongo_collection()
+        state = None
+        
+        if coll is not None:
+            try:
+                state = coll.find_one({"_id": "current_state"})
+            except Exception as e:
+                print(f"⚠️  Could not load state from MongoDB: {e}")
+                
+        # Fallback to local json if mongo is empty or failed
+        if not state:
+            if not os.path.exists(self.STATE_FILE):
+                return False
+            try:
+                with open(self.STATE_FILE) as f:
+                    state = json.load(f)
+            except Exception as e:
+                print(f"⚠️  Could not load fallback state: {e}")
+                return False
+
         try:
-            with open(self.STATE_FILE) as f:
-                state = json.load(f)
             self.cash         = state["cash"]
             self.initial_cash = state.get("initial_cash", TEST_INITIAL_CASH)
             self.total_trades = state.get("total_trades", 0)
@@ -1293,7 +1332,7 @@ class MultiStockTradingSimulator:
             print(f"   Last session: {state.get('last_updated', 'unknown')}  {saved_mode}")
             return True
         except Exception as e:
-            print(f"⚠️  Could not load state: {e}")
+            print(f"⚠️  Could not parse state: {e}")
             return False
 
     # ── Main Loop ─────────────────────────────────────────────────────────────
@@ -1316,7 +1355,7 @@ class MultiStockTradingSimulator:
 
         mode_label = "🧪 TEST MODE (simulated prices)" if TEST_MODE else "🔴 LIVE MODE (real NSE prices)"
         # 300s loop (5m): LLM uses ~8 tool calls per cycle ≈ 9 API requests.
-        sleep_secs = TEST_LOOP_SLEEP if TEST_MODE else 300
+        sleep_secs = TEST_LOOP_SLEEP if TEST_MODE else 60
 
         print("=" * 80)
         print("🤖  AUTONOMOUS LLM TRADING BOT — MULTI-TOOL RESEARCH AGENT  🤖")

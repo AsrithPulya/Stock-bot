@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 # Approximate pricing per 1 Million tokens (in USD)
 # (Using conservative estimates for gemini-2.5-flash and gemini-2.5-flash-lite)
 FLASH_IN_PRICE = 0.15
@@ -8,8 +12,8 @@ LITE_OUT_PRICE = 0.30
 
 # Cycles
 MARKET_HOURS = 6.25 # 9:15 to 15:30
-CYCLES_PER_HOUR = 60 / 5 # 5 min loop
-CYCLES_PER_DAY = MARKET_HOURS * CYCLES_PER_HOUR # 75
+CYCLES_PER_HOUR = 60 / 1 # 1 min loop
+CYCLES_PER_DAY = MARKET_HOURS * CYCLES_PER_HOUR # 375
 
 # Constants
 STOCKS = 80

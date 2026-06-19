@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 """
 test_gemini_models.py
 =====================
@@ -16,8 +20,15 @@ import json
 import datetime
 import google.generativeai as genai
 
+import dotenv
+# Load environment variables from the parent directory's .env
+dotenv.load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
 # ── API Key ───────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = "AIzaSyASyJ-Yf2UUFEMNQAYS0F9cAoU24a3VMuY"   # ← Your key
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+if not GEMINI_API_KEY:
+    GEMINI_API_KEY = "AIzaSyASyJ-Yf2UUFEMNQAYS0F9cAoU24a3VMuY"   # ← Fallback placeholder
+
 
 # ── Test prompt (short, to save tokens) ──────────────────────────────────────
 TEST_PROMPT = (
@@ -268,7 +279,7 @@ def main():
         print("\n  ⚠️  No models responded successfully — check your API key or quota.")
 
     # 6. Save JSON results
-    out_file = "gemini_model_test_results.json"
+    out_file = os.path.join(os.path.dirname(__file__), "..", "gemini_model_test_results.json")
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump({
             "run_at": datetime.datetime.now().isoformat(),

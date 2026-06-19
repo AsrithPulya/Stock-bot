@@ -1,10 +1,18 @@
+import os
 import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import re
+
+# Resolve files relative to script location
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+agents_path = os.path.join(project_root, "agents.py")
+main_path = os.path.join(project_root, "main.py")
 
 # ==========================================
 # 1. Update agents.py
 # ==========================================
-with open("agents.py", "r") as f:
+with open(agents_path, "r") as f:
     agents_text = f.read()
 
 # Add MODEL_ECONOMIST
@@ -63,14 +71,14 @@ new_state_dict = """        "agent_signals": {
         },"""
 agents_text = agents_text.replace(old_state_dict, new_state_dict)
 
-with open("agents.py", "w") as f:
+with open(agents_path, "w") as f:
     f.write(agents_text)
 
 
 # ==========================================
 # 2. Update main.py
 # ==========================================
-with open("main.py", "r") as f:
+with open(main_path, "r") as f:
     main_text = f.read()
 
 # Update get_multi_agent_portfolio_decision signature and implementation
@@ -85,7 +93,7 @@ replacement_multi_start = """    # 1. Global Macro-Economist Execution
     bullish_sectors = [s for s, data in economist_map.items() if data.get('sentiment') == 'BULLISH']
     bearish_sectors = [s for s, data in economist_map.items() if data.get('sentiment') == 'BEARISH']
     bot_log(f"🌐 [Economist] Bullish Sectors: {bullish_sectors} | Bearish Sectors: {bearish_sectors}")
-
+ 
     # 2. Sequential Execution for Researcher & Quant"""
 main_text = main_text.replace(target_multi_start, replacement_multi_start)
 
@@ -109,7 +117,7 @@ replacement_orch_call = """    decisions = agents.run_orchestrator(
     )"""
 main_text = main_text.replace(target_orch_call, replacement_orch_call)
 
-with open("main.py", "w") as f:
+with open(main_path, "w") as f:
     f.write(main_text)
 
 print("Patch applied successfully.")

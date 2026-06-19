@@ -24,7 +24,7 @@ _GENAI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else gena
 MODEL_RESEARCHER = 'gemini-2.5-flash-lite'
 MODEL_QUANT = 'gemini-2.5-flash-lite'
 MODEL_ADVERSARIAL = 'gemini-2.5-flash-lite'
-MODEL_ECONOMIST = 'gemini-2.5-flash'
+MODEL_ECONOMIST = 'gemini-2.5-flash-lite'
 MODEL_ORCHESTRATOR = 'gemini-2.5-flash'
 MODEL_UNIVERSE_PICKER = 'gemini-2.5-flash-lite'
 MODEL_THEME = 'gemini-2.5-flash-lite'
@@ -74,10 +74,11 @@ def _safe_json_loads(text: str, expected: JsonShape) -> Optional[Any]:
     except Exception:
         # Some models accidentally prefix text; try to salvage by slicing to first JSON token.
         start = min([i for i in [cleaned.find("["), cleaned.find("{")] if i != -1], default=-1)
-        if start == -1:
+        end = max([cleaned.rfind("]"), cleaned.rfind("}")], default=-1)
+        if start == -1 or end == -1 or start >= end:
             return None
         try:
-            parsed = json.loads(cleaned[start:])
+            parsed = json.loads(cleaned[start:end+1])
         except Exception:
             return None
 
@@ -87,6 +88,15 @@ def _safe_json_loads(text: str, expected: JsonShape) -> Optional[Any]:
         return None
     return parsed
 
+
+import random
+
+# Unified order of fallback models to survive rate limits or outages
+FALLBACK_MODELS = [
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-3-flash-preview'
+]
 
 def _call_model(
     model_name: str,
@@ -98,102 +108,82 @@ def _call_model(
     fallback_model: Optional[str] = None,
     tools: Optional[list] = None,
 ) -> str:
-    # Add backoff for rate limits
-    max_retries = 3
-    backoff = 10
-    
-    kwargs = {}
-    selected = _choose_model(model_name, prompt)
-    
-    # Gemma doesn't support system_instruction directly in GenerativeModel init 
-    # the same way, so we prepend it for gemma models.
-    if system_instruction and "gemma" in selected:
-        full_prompt = f"SYSTEM: {system_instruction}\n\nUSER: {prompt}"
-    else:
-        full_prompt = prompt
+    # Build distinct list of models to try in sequence
+    models_to_try = [model_name]
+    if fallback_model and fallback_model not in models_to_try:
+        models_to_try.append(fallback_model)
+    for fb in FALLBACK_MODELS:
+        if fb not in models_to_try:
+            models_to_try.append(fb)
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            config_kwargs = {}
-            if system_instruction and "gemini" in selected:
-                config_kwargs["system_instruction"] = system_instruction
-            if tools:
-                config_kwargs["tools"] = tools
-            
-            config = types.GenerateContentConfig(**config_kwargs)
+    # Sequentially try each model
+    for selected in models_to_try:
+        max_retries = 3
+        backoff = 2.0
+        
+        # Format prompt
+        if system_instruction and "gemma" in selected:
+            full_prompt = f"SYSTEM: {system_instruction}\n\nUSER: {prompt}"
+        else:
+            full_prompt = prompt
 
-            if tools:
-                chat = _GENAI_CLIENT.chats.create(
-                    model=selected,
-                    config=config,
-                )
-                response = chat.send_message(full_prompt)
-            else:
-                response = _GENAI_CLIENT.models.generate_content(
-                    model=selected,
-                    contents=full_prompt,
-                    config=config,
-                )
-            final_text = _strip_code_fences(getattr(response, "text", "")).strip()
-            if not final_text:
-                print(f"⚠️ Agent {selected} returned an empty response.")
-                return "[]" if expected_json == "array" else "{}"
+        for attempt in range(1, max_retries + 1):
+            try:
+                config_kwargs = {}
+                if system_instruction and "gemini" in selected:
+                    config_kwargs["system_instruction"] = system_instruction
+                if tools:
+                    config_kwargs["tools"] = tools
+                elif expected_json in ("object", "array"):
+                    config_kwargs["response_mime_type"] = "application/json"
+                
+                config = types.GenerateContentConfig(**config_kwargs)
 
-            # Validate JSON early so we can retry/fallback.
-            if expected_json in ("object", "array"):
-                if _safe_json_loads(final_text, expected_json) is None:
-                    raise ValueError("Model returned invalid JSON for expected shape")
+                if tools:
+                    chat = _GENAI_CLIENT.chats.create(
+                        model=selected,
+                        config=config,
+                    )
+                    response = chat.send_message(full_prompt)
+                else:
+                    response = _GENAI_CLIENT.models.generate_content(
+                        model=selected,
+                        contents=full_prompt,
+                        config=config,
+                    )
+                
+                final_text = _strip_code_fences(getattr(response, "text", "")).strip()
+                if not final_text:
+                    raise ValueError("Model returned empty response string")
 
-            return final_text
-            
-        except Exception as e:
-            err_str = str(e).lower()
-            if "429" in err_str or "exhausted" in err_str or "quota" in err_str:
-                if attempt < max_retries:
-                    # Sometimes Gemini asks to wait up to 60s
-                    wait_time = 60 if backoff < 60 else backoff
-                    print(f"⚠️ Agent {selected} Rate Limited. Waiting {wait_time}s before retry (Attempt {attempt}/{max_retries})...")
+                # Validate JSON shape early to trigger fallback if corrupt
+                if expected_json in ("object", "array"):
+                    if _safe_json_loads(final_text, expected_json) is None:
+                        raise ValueError("Model returned invalid or malformed JSON structure")
+
+                return final_text
+
+            except Exception as e:
+                err_str = str(e).lower()
+                print(f"⚠️ Warning: Agent call to {selected} failed on attempt {attempt}/{max_retries}: {e}")
+
+                # Apply exponential backoff with random jitter to disperse concurrent bot loops
+                jitter = random.uniform(1.0, 3.0)
+                wait_time = backoff + jitter
+
+                if "429" in err_str or "exhausted" in err_str or "quota" in err_str:
+                    wait_time = max(wait_time, 5.0)
+                    print(f"🔄 Rate limit / busy error. Backing off {wait_time:.1f}s and switching models...")
                     time.sleep(wait_time)
-                    backoff = wait_time * 2
-                    continue
-            elif "timeout" in err_str or "deadline" in err_str or "504" in err_str:
-                print(f"⚠️ Agent {selected} Timed Out on attempt {attempt}.")
-                if attempt < max_retries:
-                    continue
+                    backoff *= 2.0
+                    # Break out of inner retry loop to immediately fall back to the next model in sequence
+                    break
+                else:
+                    print(f"⏳ Sleeping {wait_time:.1f}s before retry...")
+                    time.sleep(wait_time)
+                    backoff *= 2.0
 
-                # Fallback once on timeout if provided (common for orchestrator)
-                if fallback_model and fallback_model != selected:
-                    try:
-                        fb_config_kwargs = {}
-                        if system_instruction and "gemini" in fallback_model:
-                            fb_config_kwargs["system_instruction"] = system_instruction
-                        if tools:
-                            fb_config_kwargs["tools"] = tools
-                        fb_config = types.GenerateContentConfig(**fb_config_kwargs)
-
-                        if tools:
-                            fb_chat = _GENAI_CLIENT.chats.create(
-                                model=fallback_model,
-                                config=fb_config,
-                            )
-                            fb_response = fb_chat.send_message(full_prompt)
-                        else:
-                            fb_response = _GENAI_CLIENT.models.generate_content(
-                                model=fallback_model,
-                                contents=full_prompt,
-                                config=fb_config,
-                            )
-                        fb_text = _strip_code_fences(getattr(fb_response, "text", "")).strip()
-                        if expected_json in ("object", "array") and _safe_json_loads(fb_text, expected_json) is None:
-                            return "[]" if expected_json == "array" else "{}"
-                        return fb_text or ("[]" if expected_json == "array" else "{}")
-                    except Exception:
-                        return "[]" if expected_json == "array" else "{}"
-
-                return "[]" if expected_json == "array" else "{}"
-                    
-            print(f"⚠️ Agent {selected} Error: {e}")
-            return "[]" if expected_json == "array" else "{}"
+    print("🚨 CRITICAL: All primary and fallback models have been completely exhausted!")
     return "[]" if expected_json == "array" else "{}"
 
 
@@ -207,7 +197,7 @@ def run_researcher_agent(news_data: dict) -> dict:
     
     prompt = f"Analyze the news for the following stocks and determine sentiment:\n{json.dumps(news_data, separators=(',', ':'))}"
     
-    res = _call_model(MODEL_RESEARCHER, prompt, sys_prompt, expected_json="object", timeout_s=45, fallback_model="gemini-2.5-flash", tools=[news_tools.get_stock_news])
+    res = _call_model(MODEL_RESEARCHER, prompt, sys_prompt, expected_json="object", timeout_s=45, fallback_model="gemini-2.5-flash")
     try:
         return json.loads(res)
     except Exception as e:
@@ -227,7 +217,7 @@ def run_quant_agent(price_data: dict) -> dict:
     # but for 60 stocks it should fit within Gemma's context.
     prompt = f"Analyze the following stocks and determine the technical signal for each stock:\n{json.dumps(price_data, separators=(',', ':'))}"
     
-    res = _call_model(MODEL_QUANT, prompt, sys_prompt, expected_json="object", timeout_s=60, fallback_model="gemini-2.5-flash", tools=[market_tools.get_price_history, market_tools.get_fundamentals])
+    res = _call_model(MODEL_QUANT, prompt, sys_prompt, expected_json="object", timeout_s=60, fallback_model="gemini-2.5-flash")
     try:
         return json.loads(res)
     except Exception as e:
@@ -272,7 +262,7 @@ def run_economist_agent(macro_data: dict, sector_data: dict, market_news: dict) 
     }
     prompt = f"Generate the sector impact matrix based on this current global state and your tools:\n{json.dumps(state, separators=(',', ':'))}"
     
-    res = _call_model(MODEL_ECONOMIST, prompt, sys_prompt, expected_json="object", timeout_s=75, fallback_model="gemini-2.5-flash-lite", tools=[market_tools.get_macro_snapshot, market_tools.get_sector_performance, news_tools.get_market_news])
+    res = _call_model(MODEL_ECONOMIST, prompt, sys_prompt, expected_json="object", timeout_s=75, fallback_model="gemini-2.5-flash-lite")
     try:
         return json.loads(res)
     except Exception as e:
@@ -392,7 +382,7 @@ def run_orchestrator(portfolio_state: dict, researcher_map: dict, quant_map: dic
     sys_prompt = f"""
 You are an AGGRESSIVE but calculated Orchestrator Portfolio Manager. Your goal is to ATTACK high-conviction opportunities to maximize absolute returns, while still holding positions for days/weeks to capture full swings.
 Primary trade objective per position: capture a 6–7% swing when possible.
-Deploy capital aggressively into high-conviction trades. You do not need to hold a cash buffer, and there are no maximum allocation limits per stock.
+DIVERSIFICATION & RISK MANAGEMENT: To avoid exposing the entire portfolio to a single stock, you MUST limit your maximum allocation per stock to 30% of the total portfolio value. Maintain 3 to 4 high-conviction positions when capital is available rather than placing all capital into one stock. Allocate sizes proportionally to the conviction level.
 
 CRITICAL: At the end of the month we need a NET PROFIT after brokerage and taxes. Real-world Indian trading fees (₹20 brokerage, 0.1% STT, ₹15.93 DP charges) will DESTROY your PnL if you trade frequently for small gains.
 - ONLY initiate a BUY if you expect a high-probability >2% profit margin over a multi-day swing.
@@ -451,8 +441,7 @@ Or SELL, or HOLD.
         sys_prompt,
         expected_json="array",
         timeout_s=90,
-        fallback_model="gemini-2.5-flash-lite",
-        tools=[market_tools.get_price_history, market_tools.get_macro_snapshot, market_tools.get_sector_performance, news_tools.get_stock_news, market_tools.check_market_health]
+        fallback_model="gemini-2.5-flash-lite"
     )
     try:
         parsed = json.loads(res)

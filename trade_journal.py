@@ -1,27 +1,23 @@
-import json
 import os
 import datetime
+from pymongo import MongoClient
+from dotenv import load_dotenv
 
 class TradeJournal:
-    def __init__(self, filename="trade_history.json"):
-        self.filename = filename
-        self.history = self.load()
-
-    def load(self):
-        if not os.path.exists(self.filename):
-            return []
-        try:
-            with open(self.filename, 'r') as f:
-                return json.load(f)
-        except Exception:
-            return []
-
-    def save(self):
-        try:
-            with open(self.filename, 'w') as f:
-                json.dump(self.history, f, indent=2)
-        except Exception as e:
-            print(f"⚠️  Could not save trade journal: {e}")
+    def __init__(self):
+        load_dotenv()
+        self.mongo_uri = os.environ.get("MONGO_URI")
+        self.collection = None
+        
+        if self.mongo_uri:
+            try:
+                client = MongoClient(self.mongo_uri)
+                db = client.get_database("stockbot")
+                self.collection = db["trade_history"]
+            except Exception as e:
+                print(f"⚠️  Could not connect to MongoDB for TradeJournal: {e}")
+        else:
+            print("⚠️  MONGO_URI not set. TradeJournal will not persist to DB.")
 
     def log_trade(self, symbol, action, quantity, price, reason, pnl=None, pnl_pct=None, 
                   observed_ltp=None, order_requested_price=None, execution_actual_price=None):
@@ -46,12 +42,29 @@ class TradeJournal:
         if execution_actual_price is not None:
             trade["execution_actual_price"] = execution_actual_price
             
-        self.history.append(trade)
-        self.save()
+        if self.collection is not None:
+            try:
+                self.collection.insert_one(trade)
+            except Exception as e:
+                print(f"⚠️  Could not save trade to MongoDB: {e}")
 
     def get_last_5_trades(self, symbol=None):
         """Return the last 5 trades, optionally filtered by symbol, for context."""
-        trades = self.history
+        if self.collection is None:
+            return []
+            
+        query = {}
         if symbol:
-            trades = [t for t in trades if t.get('symbol') == symbol]
-        return trades[-5:]
+            query['symbol'] = symbol
+            
+        try:
+            cursor = self.collection.find(query).sort("timestamp", -1).limit(5)
+            # Reverse so it's in chronological order (oldest to newest) like the original list
+            trades = list(cursor)
+            trades.reverse()
+            # remove _id for clean json
+            for t in trades:
+                t.pop('_id', None)
+            return trades
+        except Exception:
+            return []
