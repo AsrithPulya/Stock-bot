@@ -158,11 +158,13 @@ def is_bot_running():
 
 def start_bot():
     try:
+        # Pipe errors into the log file so they show up on the dashboard
+        log_file = open(LOG_FILE, "a")
         proc = subprocess.Popen(
             [sys.executable, "main.py"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=log_file,
             start_new_session=True,
         )
         time.sleep(1.5)   # give it a moment to write PID
