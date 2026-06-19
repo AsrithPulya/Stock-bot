@@ -68,3 +68,12 @@ class TradeJournal:
             return trades
         except Exception:
             return []
+
+    @property
+    def history(self):
+        if self.collection is None:
+            return []
+        try:
+            return list(self.collection.find({}, {"_id": 0}).sort("timestamp", 1))
+        except Exception:
+            return []
