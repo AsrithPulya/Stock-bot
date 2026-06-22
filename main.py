@@ -1345,8 +1345,8 @@ class MultiStockTradingSimulator:
         # The bot will only stop when the dashboard sends SIGINT (Stop button).
         try:
             signal.signal(signal.SIGHUP, signal.SIG_IGN)
-        except (OSError, AttributeError):
-            pass  # SIGHUP not available on Windows — safe to ignore
+        except (OSError, AttributeError, ValueError):
+            pass  # Safe to ignore if not in main thread or not available
 
         # Write PID so Streamlit can stop the bot
         try:
