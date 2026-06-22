@@ -1496,14 +1496,22 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is awake and trading! Monitor your stats in MongoDB.")
 
 def start_health_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
+    try:
+        port = int(os.environ.get("PORT", 10000))
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        print(f"🌐 Lightweight Health Server listening on port {port} for Render...", flush=True)
+        server.serve_forever()
+    except Exception as e:
+        print(f"⚠️ Failed to start health server: {e}", flush=True)
 
 if __name__ == "__main__":
-    # Start a tiny dummy web server so Render's health checks pass
-    threading.Thread(target=start_health_server, daemon=True).start()
-    print("🌐 Lightweight Health Server started for Render!")
+    def run_bot():
+        bot = MultiStockTradingSimulator(initial_cash=TEST_INITIAL_CASH)
+        bot.run_simulation()
 
-    bot = MultiStockTradingSimulator(initial_cash=TEST_INITIAL_CASH)
-    bot.run_simulation()
+    # Start the heavy trading bot in a background thread
+    print("🤖 Starting Trading Bot in background thread...", flush=True)
+    threading.Thread(target=run_bot, daemon=True).start()
+
+    # Keep the main thread instantly available to bind the web server port for Render
+    start_health_server()
