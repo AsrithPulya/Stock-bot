@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import signal
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import yfinance as yf
 from pymongo import MongoClient
 from dotenv import load_dotenv
@@ -47,8 +49,8 @@ MAX_HOLD_DAYS = None
 UNIVERSE_INDEX_NAME = "NIFTY 500"           # broad NSE coverage without “all NSE” overload
 UNIVERSE_CACHE_PATH = os.path.join("data", "nse_universe_symbols.txt")
 UNIVERSE_REFRESH_HOURS = 24                # refresh constituents daily
-MAX_WATCHLIST = 60                         # number of symbols per cycle to fetch/analyze
-UNIVERSE_CANDIDATE_POOL = 140              # pool presented to LLM for watchlist selection
+MAX_WATCHLIST = 20                         # REDUCED FOR 512MB RAM (was 60)
+UNIVERSE_CANDIDATE_POOL = 40              # REDUCED FOR 512MB RAM (was 140)
 
 # News-aware selection limits (to avoid timeouts)
 THEME_CANDIDATE_POOL = 220                 # symbols to consider before news fetch
@@ -1483,6 +1485,25 @@ class MultiStockTradingSimulator:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass # Suppress HTTP logs to keep terminal clean
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is awake and trading! Monitor your stats in MongoDB.")
+
+def start_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
 if __name__ == "__main__":
+    # Start a tiny dummy web server so Render's health checks pass
+    threading.Thread(target=start_health_server, daemon=True).start()
+    print("🌐 Lightweight Health Server started for Render!")
+
     bot = MultiStockTradingSimulator(initial_cash=TEST_INITIAL_CASH)
     bot.run_simulation()
