@@ -1513,5 +1513,8 @@ if __name__ == "__main__":
     print("🤖 Starting Trading Bot in background thread...", flush=True)
     threading.Thread(target=run_bot, daemon=True).start()
 
-    # Keep the main thread instantly available to bind the web server port for Render
-    start_health_server()
+    try:
+        start_health_server()
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped gracefully by user.", flush=True)
+        sys.exit(0)
