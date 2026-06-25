@@ -1357,7 +1357,7 @@ class MultiStockTradingSimulator:
 
         mode_label = "🧪 TEST MODE (simulated prices)" if TEST_MODE else "🔴 LIVE MODE (real NSE prices)"
         # 300s loop (5m): LLM uses ~8 tool calls per cycle ≈ 9 API requests.
-        sleep_secs = TEST_LOOP_SLEEP if TEST_MODE else 60
+        sleep_secs = TEST_LOOP_SLEEP if TEST_MODE else 15
 
         print("=" * 80)
         print("🤖  AUTONOMOUS LLM TRADING BOT — MULTI-TOOL RESEARCH AGENT  🤖")

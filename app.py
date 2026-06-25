@@ -231,7 +231,7 @@ def pnl_color_class(val):
 
 
 # ─── Auto-refresh ────────────────────────────────────────────────────────────
-REFRESH_SECS = 15
+REFRESH_SECS = 5
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = time.time()
 if time.time() - st.session_state.last_refresh > REFRESH_SECS:
