@@ -4,6 +4,8 @@ import random
 import json
 import os
 import sys
+import contextlib
+import requests
 import signal
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -202,15 +204,26 @@ def get_real_stock_price(symbol, last_price=None, exchange="NSE"):
         return get_simulated_price(symbol, last_price, exchange)
 
     try:
+        if exchange == "NSE":
+            url = f"https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/NSE/segment/CASH/{symbol}/latest"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            r = requests.get(url, headers=headers, timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                if 'ltp' in data:
+                    return float(data['ltp'])
+        
+        # Fallback to yfinance for US stocks or if Groww fails
         yf_symbol = symbol if exchange == "US" else f"{symbol}.NS"
-        ticker = yf.Ticker(yf_symbol)
-        data = ticker.history(period="5d")
-        if not data.empty:
-            return float(data['Close'].iloc[-1])
-        info = ticker.info
-        for key in ('currentPrice', 'regularMarketPrice', 'previousClose'):
-            if info.get(key):
-                return float(info[key])
+        with contextlib.redirect_stderr(open(os.devnull, 'w')):
+            ticker = yf.Ticker(yf_symbol)
+            data = ticker.history(period="5d")
+            if not data.empty:
+                return float(data['Close'].iloc[-1])
+            info = ticker.info
+            for key in ('currentPrice', 'regularMarketPrice', 'previousClose'):
+                if info.get(key):
+                    return float(info[key])
     except Exception:
         pass
 
@@ -1517,4 +1530,4 @@ if __name__ == "__main__":
         start_health_server()
     except KeyboardInterrupt:
         print("\n🛑 Bot stopped gracefully by user.", flush=True)
-        sys.exit(0)
+        os._exit(0)
