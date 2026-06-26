@@ -18,6 +18,8 @@ import time
 import datetime
 import requests
 import yfinance as yf
+import os
+import contextlib
 import json
 import os
 
@@ -161,8 +163,9 @@ def check_market_health() -> dict:
     def _fetch():
         try:
             # Fetch VIX and Nifty — 3-day window to get yesterday + today
-            vix_hist   = yf.Ticker("^INDIAVIX").history(period="3d")
-            nifty_hist = yf.Ticker("^NSEI").history(period="3d")
+            with contextlib.redirect_stderr(open(os.devnull, 'w')):
+                vix_hist   = yf.Ticker("^INDIAVIX").history(period="3d")
+                nifty_hist = yf.Ticker("^NSEI").history(period="3d")
 
             kill = False
             reasons = []
@@ -238,8 +241,18 @@ def get_price_history(symbol: str, exchange: str = "NSE") -> dict:
     def _fetch():
         yf_sym = symbol if exchange == "US" else f"{symbol}.NS"
         try:
-            data = yf.Ticker(yf_sym).history(period="30d")
-            closes = [round(float(p), 2) for p in data["Close"].tolist()][-20:]
+            with contextlib.redirect_stderr(open(os.devnull, 'w')):
+                data = yf.Ticker(yf_sym).history(period="30d")
+                closes = [round(float(p), 2) for p in data["Close"].tolist()][-20:]
+            
+            # GROWW FALLBACK FOR NSE STOCKS IF YFINANCE FAILS
+            if not closes and exchange == "NSE":
+                url = f"https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/NSE/segment/CASH/{symbol}/latest"
+                r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                if r.status_code == 200 and 'ltp' in r.json():
+                    p = float(r.json()['ltp'])
+                    closes = [p] * 20
+            
             pct = 0.0
             if len(closes) >= 2 and closes[-2] > 0:
                 pct = round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)
@@ -283,14 +296,15 @@ def get_fundamentals(symbol: str, exchange: str = "NSE") -> dict:
     def _fetch():
         yf_sym = symbol if exchange == "US" else f"{symbol}.NS"
         try:
-            info = yf.Ticker(yf_sym).info
+            with contextlib.redirect_stderr(open(os.devnull, 'w')):
+                info = yf.Ticker(yf_sym).info
             keys = [
                 "trailingPE", "forwardPE", "earningsPerShare",
                 "marketCap", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
                 "dividendYield", "heldPercentInsiders", "recommendationKey",
                 "sector", "industry",
             ]
-            result = {k: info.get(k) for k in keys}
+            result = {k: info.get(k) for k in keys} if info else {}
             result["symbol"] = symbol
             return result
         except Exception as e:
@@ -396,7 +410,8 @@ def get_macro_snapshot() -> dict:
         result = {}
         for label, sym in tickers.items():
             try:
-                hist = yf.Ticker(sym).history(period="2d")
+                with contextlib.redirect_stderr(open(os.devnull, 'w')):
+                    hist = yf.Ticker(sym).history(period="2d")
                 if not hist.empty:
                     closes = list(hist["Close"])
                     price  = round(float(closes[-1]), 2)
@@ -461,7 +476,8 @@ def get_sector_performance() -> dict:
         result = {}
         for name, sym in sectors.items():
             try:
-                hist = yf.Ticker(sym).history(period="2d")
+                with contextlib.redirect_stderr(open(os.devnull, 'w')):
+                    hist = yf.Ticker(sym).history(period="2d")
                 if not hist.empty:
                     closes = list(hist["Close"])
                     price  = round(float(closes[-1]), 2)

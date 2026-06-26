@@ -15,6 +15,8 @@ import time
 import urllib.parse
 import feedparser
 import yfinance as yf
+import os
+import contextlib
 
 # ── RSS feed templates ────────────────────────────────────────────────────────
 _GOOGLE_NEWS_RSS = (
@@ -85,8 +87,10 @@ def get_stock_news(symbol: str, company_name: str = "") -> dict:
         # 2. Yahoo Finance news
         try:
             yf_sym = symbol if symbol.endswith(".NS") else f"{symbol}.NS"
-            ticker = yf.Ticker(yf_sym)
-            for item in (ticker.news or [])[:3]:
+            with contextlib.redirect_stderr(open(os.devnull, 'w')):
+                ticker = yf.Ticker(yf_sym)
+                news = ticker.news or []
+            for item in news[:3]:
                 title = item.get("title", "").strip()
                 if title and title not in headlines:
                     headlines.append(title)
