@@ -240,31 +240,38 @@ def get_price_history(symbol: str, exchange: str = "NSE") -> dict:
     """
     def _fetch():
         yf_sym = symbol if exchange == "US" else f"{symbol}.NS"
+        closes = []
         try:
             with contextlib.redirect_stderr(open(os.devnull, 'w')):
                 data = yf.Ticker(yf_sym).history(period="30d")
                 closes = [round(float(p), 2) for p in data["Close"].tolist()][-20:]
-            
-            # GROWW FALLBACK FOR NSE STOCKS IF YFINANCE FAILS
-            if not closes and exchange == "NSE":
+        except Exception:
+            pass
+
+        # GROWW FALLBACK FOR NSE STOCKS IF YFINANCE FAILS
+        if not closes and exchange == "NSE":
+            try:
                 url = f"https://groww.in/v1/api/stocks_data/v1/tr_live_prices/exchange/NSE/segment/CASH/{symbol}/latest"
                 r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
                 if r.status_code == 200 and 'ltp' in r.json():
                     p = float(r.json()['ltp'])
                     closes = [p] * 20
+            except Exception:
+                pass
+        
+        pct = 0.0
+        if len(closes) >= 2 and closes[-2] > 0:
+            pct = round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)
             
-            pct = 0.0
-            if len(closes) >= 2 and closes[-2] > 0:
-                pct = round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)
-            return {
-                "symbol": symbol, "exchange": exchange,
-                "prices": closes,
-                "current_price": closes[-1] if closes else 0,
-                "pct_change_today": pct,
-            }
-        except Exception as e:
-            return {"symbol": symbol, "exchange": exchange,
-                    "prices": [], "error": str(e)}
+        if not closes:
+            return {"symbol": symbol, "exchange": exchange, "prices": [], "error": "Failed to fetch"}
+            
+        return {
+            "symbol": symbol, "exchange": exchange,
+            "prices": closes,
+            "current_price": closes[-1] if closes else 0,
+            "pct_change_today": pct,
+        }
 
     return _cached(f"price_{symbol}_{exchange}", _fetch)
 
@@ -295,20 +302,22 @@ def get_fundamentals(symbol: str, exchange: str = "NSE") -> dict:
     """
     def _fetch():
         yf_sym = symbol if exchange == "US" else f"{symbol}.NS"
+        info = {}
         try:
             with contextlib.redirect_stderr(open(os.devnull, 'w')):
                 info = yf.Ticker(yf_sym).info
-            keys = [
-                "trailingPE", "forwardPE", "earningsPerShare",
-                "marketCap", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
-                "dividendYield", "heldPercentInsiders", "recommendationKey",
-                "sector", "industry",
-            ]
-            result = {k: info.get(k) for k in keys} if info else {}
-            result["symbol"] = symbol
-            return result
-        except Exception as e:
-            return {"symbol": symbol, "error": str(e)}
+        except Exception:
+            pass
+            
+        keys = [
+            "trailingPE", "forwardPE", "earningsPerShare",
+            "marketCap", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
+            "dividendYield", "heldPercentInsiders", "recommendationKey",
+            "sector", "industry",
+        ]
+        result = {k: info.get(k) for k in keys} if info else {}
+        result["symbol"] = symbol
+        return result
 
     return _cached(f"fund_{symbol}_{exchange}", _fetch)
 
